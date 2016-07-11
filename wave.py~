@@ -1,0 +1,523 @@
+import cv2
+import copy
+import numpy as np
+import os
+import pickle
+from scipy.signal import medfilt, fftconvolve
+from scipy.ndimage.filters import laplace, gaussian_filter
+from scipy.optimize import leastsq
+from matplotlib import pyplot as plt
+# 3d map
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+from matplotlib.ticker import LinearLocator, FormatStrFormatter
+
+IMG_URL = r"Desktop/Gangfu free surface test/Converted_images/B00126.bmp"
+SCN_W = 1366
+SCN_H = 768
+IMG_DIR = r"Desktop/Gangfu free surface test/Converted_images_full/Cam_Date=160706_Time=152257 converted/"
+N_GRAD = 200
+N_THRESH = 10
+TEST = 1
+DUMP_URL = IMG_DIR + "results.pkl"
+X_SCALE = 138./1920
+Y_SCALE = 86./1200
+
+def get_urls(dir):
+    return [IMG_DIR+i for i in os.listdir(dir) if i.split('.')[-1]=="bmp"]
+
+def preprocess(img):
+    h, w = img.shape[:2]
+    # shot noise removal
+#    img =  cv2.resize(img, (SCN_W,SCN_H))
+ #   cv2.imshow('img',img)
+  #  cv2.waitKey(0)
+    img = cv2.medianBlur(img, 7)
+
+    # edge detection
+    img = cv2.Laplacian(img, cv2.CV_8U)
+    img=cv2.Sobel(img, cv2.CV_8U,0, 1, ksize = 3)
+    # img = cv2.bilateralFilter(img, 0, 0, 7)
+
+
+    return img
+
+def digitise(img, centroid = 0):
+    h, w = img.shape[:2]
+    print h, w
+    if centroid:
+        ret = []
+        for i in xrange(w):
+            s = 0
+            for j in xrange(h):
+                
+                s += img[j, i]*(h-j)
+            ret.append(s/sum(img[:, i]))
+
+    else:
+        ret =  h - np.argmax(img, axis = 0)
+        ret = medfilt(ret, 3)
+        
+    return ret
+
+def test():
+    img = cv2.imread(IMG_URL, 0)
+    img = cv2.medianBlur(img, 7)
+    img = cv2.Sobel(img, cv2.CV_8U,0,1,ksize = 3)
+
+    # img = cv2.Laplacian(img, cv2.CV_8U)
+    rsz = cv2.resize(img, (SCN_W, SCN_H))
+    cv2.imshow('img',rsz)
+    cv2.waitKey()
+
+    ret = digitise(img)
+    grad = fftconvolve(ret, [1,-1], mode = 'same')
+    lap = abs(laplace(ret))
+    lap_avg = fftconvolve(lap, [0.33,0.34, 0.33], mode = 'same')
+    plt.plot(ret)
+    plt.plot(lap_avg)
+    plt.show()
+    # null_idx = np.zeros(len(ret), dtype = 'bool')
+
+    # cur_idx = 1
+    # while 1:
+    #     # if grad[cur_idx] > N_GRAD:
+    #     #     print "spike (+) at %d" % cur_idx
+    #     #     null_idx[cur_idx] = 1
+    #     #     for i in range(cur_idx + 1, len(ret)):
+    #     #         if not grad[i] < -N_GRAD:
+    #     #             null_idx[i] = 1
+    #     #             cur_idx += 1
+    #     #         else:
+    #     #             cur_idx += 1
+    #     #             break
+                
+    #     if grad[cur_idx] < -N_GRAD:
+    #         null_idx[cur_idx] = 1
+    #         for i in range(cur_idx + 1, len(ret)):
+    #             if not grad[i] > N_GRAD:
+    #                 null_idx[i] = 1
+    #                 cur_idx += 1
+    #             else:
+    #                 cur_idx += 1
+    #                 break
+    #     else:
+    #         cur_idx += 1
+    #     print cur_idx
+    #     if cur_idx >= len(ret) - 1: break
+
+            
+
+            
+    ret[lap_avg > N_THRESH] = 0
+    
+    
+    plt.plot(ret)
+    plt.plot(lap_avg)
+    plt.show()
+
+
+def fit_sine(data):
+    t = np.arange(len(data))
+    guess_mean = np.mean(data)
+    guess_phase = 0
+    guess_freq = 1./len(data)
+    guess_amp = np.percentile(data, 98)-np.percentile(data, 2)
+    op_func = lambda x: x[3]*np.sin(2*np.pi*x[2]*t+x[1]) + x[0] - data
+    est_mean, est_phase, est_freq, est_amp = leastsq(op_func, [guess_mean, guess_phase, guess_freq, guess_amp])[0]
+
+    return est_amp*np.sin(est_freq*2*np.pi*t+est_phase)+est_mean
+    
+
+def plot(data):
+    plt.plot(data)
+    plt.show()
+
+def test_1(url):
+    raw = cv2.imread(url, 0)
+    
+#    img = cv2.equalizeHist(img)
+    # plt.imshow(img)
+    # plt.show()
+    img = cv2.medianBlur(raw, 31)
+
+
+    color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    color = cv2.Sobel(img, cv2.CV_32F, 0, 1, ksize= 3)
+
+    # img = cv2.GaussianBlur(img, (19,19), 3)
+#    plt.imshow(color[:, :, 0])
+    # plt.show()
+
+    
+    # cv2.imshow('img', cv2.resize(img,(SCN_W,SCN_H)))
+    # cv2.waitKey()
+    # smoothed = []               
+    def digitise(img):
+        ret = np.zeros(img.shape[1])
+        max_indices = []
+        # gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+        kernal_gauss = cv2.getGaussianKernel(img.shape[0], 20)
+        kernal_gauss *= 1.0/np.max(kernal_gauss)
+
+
+        # calculate centres for smoothing kernal
+        for i in xrange(img.shape[1]):
+            col = color[:,i]
+            grad_avg = fftconvolve(col, [1./15 for i in xrange(15)],
+                                   mode = 'same')
+            max_idx = np.argmin(grad_avg)
+            max_indices.append(max_idx)
+
+        max_indices = medfilt(max_indices, 31)
+        max_indices = gaussian_filter(max_indices, 55)
+        cpy = max_indices
+        max_indices = fit_sine(max_indices).astype('int32')
+        
+
+        # find edge
+        for i in xrange(img.shape[1]):
+            col = color[:,i]
+            max_idx = max_indices[i]
+            k = np.roll(kernal_gauss, max_idx - img.shape[0]/2)
+
+            if max_idx > img.shape[0]/2:
+                k[:max_idx - 20 * 3] = 0
+            else:
+                k[max_idx + 20 * 3:] = 0
+
+            col = col.astype('float64')*k[:,0]
+
+
+            # print min(col)
+
+            # thresh = np.percentile(col,0.1)
+            thresh = np.percentile(col[col<0],1)
+            for j in xrange(len(col)-1, -1, -1):
+                if col[j] <= thresh:
+                    ret[i] = j
+                    break
+            # ret.append(np.argmin(col))
+        # plt.imshow(np.array(smoothed).T)
+        # plt.show()
+
+
+        ret = medfilt(ret, 31)
+        # ret = gaussian_filter(ret, 15)
+
+       
+
+        
+
+        #plot
+        # plt.imshow(raw,cmap='Greys_r')
+        
+        # plt.figure(figsize = (14, 6))
+        # plt.imshow(raw, cmap='Greys_r')
+        # plt.grid(c='w')
+        # plt.tight_layout()
+        # plt.xlabel('$x$ [cm]', fontsize = 20)
+        # plt.ylabel('$y$ [cm]', fontsize = 20)
+        # plt.xlim([0, 1920])
+        # plt.ylim([1200,0])
+        # # plt.plot(max_indices, 'b')
+        # # plt.plot(cpy, 'magenta')
+        # # plt.ylim([0,1200])
+        # plt.plot(ret,'r', linewidth = 4,c='darkgoldenrod', linestyle = '--', label = 'Free surface detection')
+        # plt.legend(loc='upper left')
+        # plt.show()
+     
+        
+        return img.shape[0] - ret
+
+    ret = digitise(img)
+    print ret.shape
+    # plt.ylim([0,1200])
+    # plt.plot(ret)
+    # plt.show()
+    return ret
+    
+
+def dump(obj, url):
+    outFile = open(url, 'wb')
+    pickle.dump(obj, outFile)
+    outFile.close()
+
+def main():
+    ret = []
+    count = 0
+    ylims = [0, 1200]
+    for url in get_urls(IMG_DIR):
+        count +=1
+
+        print url
+        
+        ret.append(test_1(url))
+        
+
+    # for r in ret:
+    #     print r.shape
+    #     plt.plot(r)
+    #     plt.ylim(ylims)
+
+    # plt.show()
+    
+    dump(np.array(ret), DUMP_URL)
+    print "successfully dumped results to %s" % DUMP_URL
+#    plt.show()
+
+def surface(data):
+    x = np.arange(data.shape[1])
+    y = np.arange(data.shape[0])
+    xv, yv = np.meshgrid(x, y)
+    fig = plt.figure()
+    ax = plt.gca(projection = '3d')
+    ax.plot_surface(xv, yv, data, cmap = cm.coolwarm, rstride = len(y)/10, cstride = len(x)/10, alpha = 0.6)
+    plt.show()
+
+def wireframe(data):
+    x = np.arange(data.shape[1])
+    y = np.arange(data.shape[0])
+    xv, yv = np.meshgrid(x, y)
+    fig = plt.figure()
+    ax = plt.gca(projection = '3d')
+    ax.plot_wireframe(xv, yv, data, rstride = len(y)/50, cstride = len(x)/50)
+    plt.show()
+
+def process():
+    data = pickle.load(open(DUMP_URL, 'rb'))
+    # surface(data)
+    wireframe(data)
+    # covar = np.dot(data.T, data)
+    # covar /= np.max(covar.flatten())
+
+    
+    # x = np.arange(covar.shape[1])
+    # y = np.arange(covar.shape[0])
+    # xv, yv = np.meshgrid(x, y)
+    # fig = plt.figure()
+    # ax = plt.gca(projection = '3d')
+    # ax.plot_surface(xv, yv, covar, cmap = cm.coolwarm)
+    # plt.show()
+    # plt.imshow(covar, vmin = 0, vmax = 1)
+    
+    # plt.colorbar()
+    # plt.show()
+
+    hist = []
+    n_bins = 100
+    for d in data.T:
+        hist.append(np.histogram(d,n_bins,(1,1200))[0].T)
+
+    surface(np.array(hist))
+
+
+def draw_line(img, data, color = (255,0,0), skip = 10, **kwargs):
+    if 'thickness' in kwargs.keys():
+        thickness = kwargs['thickness']
+    else:
+        thickness = 1
+    data = data.astype('int32')
+    for i in xrange(0, img.shape[1]-1, skip):
+        if i+ skip/2 > img.shape[1]-1:break
+        cv2.line(img, (i, img.shape[0] - data[i]), (i+skip/2,img.shape[0]- data[i+skip/2]), color, thickness = thickness)
+    return img
+
+def check():
+    data = pickle.load(open(DUMP_URL, 'rb'))
+    urls = get_urls(IMG_DIR)
+    frames = []
+    v_out = cv2.VideoWriter(IMG_DIR + 'result.mp4', cv2.VideoWriter_fourcc('m','p','4','v'), 30 , (SCN_W, SCN_H), isColor = 0)
+
+    count = 0
+    imgs = []
+    for i in xrange(len(urls)):
+        count +=1
+        
+        url = urls[i]
+        im = cv2.imread(url, 0)
+        im = draw_line(cv2.cvtColor(im, cv2.COLOR_GRAY2BGR), data[i], skip = 100, thickness = 5)
+        v_out.write(cv2.resize(im, (SCN_W, SCN_H)))
+        print "written frame %d to file" % i
+        # if count > 100:break;
+        # plt.figure(figsize = (14, 6))
+        # plt.imshow(im, cmap = 'Greys_r')
+        # plt.xlim([0, 1920])
+        # plt.ylim([1200,0])
+        # plt.plot(im.shape[0]-data[i], 'r', linewidth = 4, linestyle = '--')
+        # plt.show()
+
+
+    cv2.destroyAllWindows()
+    v_out.release()                      
+
+def parse(url, num_sensors = 2, check = 0):
+    ''' parse USS txt record'''
+    inFile = open(url, 'r')
+    inFile.readline()           # digest header
+    ret =  np.array([np.array(line.split(), dtype = 'float64')[:num_sensors+1]
+                     for line in inFile]).T
+    def plot(data):
+        x = ret[0]
+        for i in xrange(num_sensors):
+            plt.plot(x, ret[i+1])
+        plt.show()
+    if check:
+        plot(ret)
+
+    return ret
+
+def scale(cam_data_url, x_scale, y_scale, x_res, y_res, invert = True):
+    ''' 
+    convert from camera to physical coordinates
+    scale: mm / px
+    '''
+    cam_data = (pickle.load(open(cam_data_url, 'rb'))).T
+    if invert:
+        cam_data = y_res - cam_data
+    return (x_res * x_scale, cam_data * y_scale)
+
+def calc_correl(cam_data,
+                uss_data,
+                fsamp_cam = 100,
+                fsamp_uss = 50,
+                check = False):
+    ''' correlate camera and uss data'''
+    assert (fsamp_cam % fsamp_uss == 0)
+    stride = fsamp_cam / fsamp_uss
+    cam_x, cam_y = cam_data
+
+    # normalise camera data
+    cam_y_mean = np.average(cam_y, axis = 1)
+    cam_y_std = np.std(cam_y, axis = 1)
+    for i in xrange(len(cam_y)):
+        cam_y[i] -= cam_y_mean[i]
+        cam_y[i] /= cam_y_std[i]
+
+
+    # normalise uss data
+    uss_y = uss_data[1:]
+    uss_y_mean = np.average(uss_y, axis = 1)
+    uss_y_std = np.std(uss_y, axis = 1)
+    for i in xrange(len(uss_y)):
+        uss_y[i] -= uss_y_mean[i]
+        uss_y[i] /= uss_y_std[i]
+    max_len = min(cam_y.shape[1]/stride, len(uss_data[0]))
+    plt.plot(cam_y[820][::stride])
+    plt.plot(np.roll(uss_y[0][:max_len],-13))
+    plt.show()
+
+    offsets = []
+    for i in xrange(len(cam_y)):
+        c = fftconvolve(cam_y[i][::stride][:max_len],
+                        uss_y[0][:max_len][::-1],
+                        mode = 'full')/max_len
+        offsets.append(np.argmax(c)-max_len+1)
+    plot(offsets)
+                       
+
+
+    # identify offset between camera and uss signals
+    c = fftconvolve(cam_y[820][::stride][:max_len],
+                    uss_y[0][:max_len][::-1],
+                    mode = 'full')/max_len
+
+    plt.plot(np.arange(-max_len+1, max_len),c)
+    plt.show()
+    offset = np.argmax(c) - max_len + 1
+    
+    ret = [np.dot(cam_y[:, ::stride][:,:max_len],
+                  np.roll(uss_data_i[:max_len], offset))/max_len
+           for uss_data_i in uss_y]
+
+
+    if check:
+        for i in xrange(len(ret)):
+            plt.plot(ret[i], label = 'uss_data_%i' % (i+1))
+        plt.legend()
+        plt.show()
+
+    return ret
+        
+def calc_weight(
+        cam_data,
+        uss_data,
+        s_stride = 1,
+        f_stride = 2,
+        main_uss_index = 0,
+        slope = 1,
+        offset = 0):
+    
+    cam_data = cam_data[::s_stride, ::f_stride]                # dim: 1920/stride x n_samp
+
+    max_length = min(len(cam_data[0]),len(uss_data[0]))
+
+    weight_v = [1 for i in xrange(len(cam_data))]
+
+    # Objective function to optimise
+    obj_func = lambda x: np.dot(cam_data[:,:max_length].T, np.array(x)) \
+               - slope*uss_data[main_uss_index, :max_length] + offset
+    weights_v = leastsq(obj_func, weight_v)[0]
+    weights_v /= np.max(weights_v)
+    plot(weights_v)
+    return weights_v
+
+def align(
+        cam_data,
+        uss_data,
+        fsamp_cam = 100,
+        fsamp_uss = 50,
+        centre_px = 821,
+        main_uss_index = 0):
+    ''' correct misalignment between camera and uss data'''
+
+    # check dimensions
+    assert len(cam_data.shape) == 2
+    assert len(uss_data.shape) == 2
+    
+    # check length
+    stride = fsamp_cam / fsamp_uss
+    max_length = min(len(cam_data[0,::stride]), len(uss_data[0]))
+
+    # normalise
+    def normalise(sig):
+        ''' Normalise sig without modifying original'''
+        sig_cpy = copy.copy(sig)
+        sig_avg = np.average(sig, axis = 1)
+        sig_std = np.std(sig, axis = 1)
+        for i in xrange(len(sig_cpy)):
+            sig_cpy[i] -= sig_avg[i]
+            sig_cpy[i] /= sig_std[i]
+
+        return sig_cpy
+
+    cam_data_norm = normalise(cam_data)
+    uss_data_norm = normalise(uss_data)
+
+    c = fftconvolve(cam_data_norm[centre_px - 1, ::stride][:max_length],
+                    uss_data_norm[main_uss_index][:max_length][::-1])/max_length
+    offset = np.argmax(c) - max_length + 1
+
+    for sig in uss_data:
+        sig = np.roll(sig, offset)
+
+    return uss_data
+
+if __name__ == "__main__":
+    
+
+    # main()  
+    
+    # process()
+
+    # check()
+
+    # test_1()
+    uss_data = parse(r'Desktop/Aachen/160706/uss3and2_15_21_00.txt', check = 0)
+    cam_data = scale(DUMP_URL, X_SCALE, Y_SCALE, 1920, 1200)
+    # c = calc_correl(cam_data, uss_data, check = True)
+    uss_aligned = align(cam_data[1], uss_data[1:])
+    weights = calc_weight(cam_data[1], uss_aligned, s_stride = 4, slope = 111.76, offset = 174.147)
+    h,b = np.histogram(np.array(weights), bins = 50)
+    plt.plot(b[:-1], h)
+    plt.show()

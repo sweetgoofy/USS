@@ -1,0 +1,72 @@
+import numpy as np
+from scipy.signal import fftconvolve
+from matplotlib import pyplot as plt
+
+def scale(
+    cam_data_url,
+    x_scale,
+    y_scale,
+    x_res,
+    y_res,
+    invert = True):
+    ''' Convert from camera to physical coordinates.
+    scale: mm / px
+    '''
+    cam_data = (pickle.load(open(cam_data_url, 'rb'))).T
+    if invert:
+        cam_data = y_res - cam_data
+    return (x_res * x_scale, cam_data * y_scale)
+
+def calc_correl(cam_data,
+                uss_data,
+                fsamp_cam = 100,
+                fsamp_uss = 50,
+                centre_px = 821,
+                check = False):
+    ''' Correlate camera and uss data.'''
+    assert (fsamp_cam % fsamp_uss == 0)
+    stride = fsamp_cam / fsamp_uss
+    cam_x, cam_y = cam_data
+
+    # normalise camera data
+    cam_y_mean = np.average(cam_y, axis = 1)
+    cam_y_std = np.std(cam_y, axis = 1)
+    for i in xrange(len(cam_y)):
+        cam_y[i] -= cam_y_mean[i]
+        cam_y[i] /= cam_y_std[i]
+
+    # normalise uss data
+    uss_y = uss_data[1:]
+    uss_y_mean = np.average(uss_y, axis = 1)
+    uss_y_std = np.std(uss_y, axis = 1)
+    for i in xrange(len(uss_y)):
+        uss_y[i] -= uss_y_mean[i]
+        uss_y[i] /= uss_y_std[i]
+
+    max_len = min(cam_y.shape[1]/stride,
+                  len(uss_data[0]))
+    if check:
+        plt.plot(cam_y[820][::stride])
+        plt.plot(np.roll(uss_y[0][:max_len],-13))
+        plt.show()
+
+
+    # Identify offset between camera and uss signals.
+    c = fftconvolve(cam_y[centre_px-1][::stride][:max_len],
+                    uss_y[0][:max_len][::-1],
+                    mode = 'full')/max_len
+    if check:
+        plt.plot(np.arange(-max_len+1, max_len),c)
+        plt.show()
+    offset = np.argmax(c) - max_len + 1    
+    ret = [np.dot(cam_y[:, ::stride][:,:max_len],
+                  np.roll(uss_data_i[:max_len], offset))/max_len
+           for uss_data_i in uss_y]
+
+    if check:
+        for i in xrange(len(ret)):
+            plt.plot(ret[i], label = 'uss_data_%i' % (i+1))
+        plt.legend()
+        plt.show()
+
+    return ret

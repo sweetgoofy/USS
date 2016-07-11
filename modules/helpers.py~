@@ -1,0 +1,2 @@
+def get_urls(url):
+    return [url+i for i in os.listdir(dir) if i.split('.')[-1]=="bmp"]

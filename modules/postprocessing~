@@ -1,0 +1,50 @@
+import numpy as np
+from scipy
+
+def scale(
+    cam_data_url,
+    x_scale,
+    y_scale,
+    x_res,
+    y_res,
+    invert = True):
+    ''' Convert from camera to physical coordinates.
+    scale: mm / px
+    '''
+    cam_data = (pickle.load(open(cam_data_url, 'rb'))).T
+    if invert:
+        cam_data = y_res - cam_data
+    return (x_res * x_scale, cam_data * y_scale)
+
+
+    offsets = []
+    for i in xrange(len(cam_y)):
+        c = fftconvolve(cam_y[i][::stride][:max_len],
+                        uss_y[0][:max_len][::-1],
+                        mode = 'full')/max_len
+        offsets.append(np.argmax(c)-max_len+1)
+    plot(offsets)
+                       
+
+
+    # identify offset between camera and uss signals
+    c = fftconvolve(cam_y[820][::stride][:max_len],
+                    uss_y[0][:max_len][::-1],
+                    mode = 'full')/max_len
+
+    plt.plot(np.arange(-max_len+1, max_len),c)
+    plt.show()
+    offset = np.argmax(c) - max_len + 1
+    
+    ret = [np.dot(cam_y[:, ::stride][:,:max_len],
+                  np.roll(uss_data_i[:max_len], offset))/max_len
+           for uss_data_i in uss_y]
+
+
+    if check:
+        for i in xrange(len(ret)):
+            plt.plot(ret[i], label = 'uss_data_%i' % (i+1))
+        plt.legend()
+        plt.show()
+
+    return ret
